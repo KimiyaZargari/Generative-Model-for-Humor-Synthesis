@@ -31,9 +31,18 @@ reddit_model.eval()
 # -----------------------
 # Load LoRA model (general)
 # -----------------------
-reddit_model = PeftModel.from_pretrained(base_model, "./general-custom-model")
-reddit_model.to(device)
-reddit_model.eval()
+general_model = PeftModel.from_pretrained(base_model, "./general-custom-model")
+general_model.to(device)
+general_model.eval()
+
+# -----------------------
+# Load LoRA model (merged)
+# -----------------------
+merged_model = PeftModel.from_pretrained(
+    base_model, "./merged-reddit-general-jokes-model"
+)
+merged_model.to(device)
+merged_model.eval()
 
 
 # -----------------------
@@ -68,7 +77,12 @@ def generate_reddit_response(prompt, max_length=128):
 
 def generate_general_response(prompt, max_length=128):
     """Uses general-custom-model (LoRA adapted)"""
-    return _generate(base_model, prompt, max_length)
+    return _generate(general_model, prompt, max_length)
+
+
+def generate_merged_response(prompt, max_length=128):
+    """Uses general-custom-model (LoRA adapted)"""
+    return _generate(merged_model, prompt, max_length)
 
 
 # -----------------------
@@ -81,3 +95,6 @@ print(generate_reddit_response(prompt))
 
 print("\n=== General jokes ===")
 print(generate_general_response(prompt))
+
+print("\n=== General jokes ===")
+print(generate_merged_response(prompt))
