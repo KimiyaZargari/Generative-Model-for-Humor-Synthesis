@@ -36,6 +36,13 @@ general_model.to(device)
 general_model.eval()
 
 # -----------------------
+# Load LoRA model (conan)
+# -----------------------
+conan_model = PeftModel.from_pretrained(base_model, "./conan-model")
+conan_model.to(device)
+conan_model.eval()
+
+# -----------------------
 # Load LoRA model (merged)
 # -----------------------
 merged_model = PeftModel.from_pretrained(
@@ -80,6 +87,11 @@ def generate_general_response(prompt, max_length=128):
     return _generate(general_model, prompt, max_length)
 
 
+def generate_conan_response(prompt, max_length=128):
+    """Uses conan-model (LoRA adapted)"""
+    return _generate(conan_model, prompt, max_length)
+
+
 def generate_merged_response(prompt, max_length=128):
     """Uses general-custom-model (LoRA adapted)"""
     return _generate(merged_model, prompt, max_length)
@@ -96,5 +108,8 @@ print(generate_reddit_response(prompt))
 print("\n=== General jokes ===")
 print(generate_general_response(prompt))
 
-print("\n=== General jokes ===")
+print("\n=== Conan jokes ===")
+print(generate_conan_response(prompt))
+
+print("\n=== Merged jokes ===")
 print(generate_merged_response(prompt))
