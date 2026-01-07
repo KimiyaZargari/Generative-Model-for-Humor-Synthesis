@@ -18,8 +18,7 @@ MODEL_PATHS = {
     # "reddit": "./models/sample-reddit-model",
     # "general": "./models/general-custom-model",
     # "conan": "./models/conan-model",
-    "semi_merged": "./models/merged-reddit-general-jokes-model", 
-    # "merged": "./merged-jokes-model",
+    "semi_merged": "./models/merged-reddit-general-jokes-model",
 }
 
 # Generation parameters
