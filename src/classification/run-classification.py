@@ -46,7 +46,7 @@ def predict_logits(text: str):
 
 # example #
 
-text = "I found weed in the 3rd grade': Jacob Balshin | New Wave Of Standup"
+text = "I decided to unplug from my phone to improve my mental health, but then I realized my phone is where all my coping mechanisms live."
 logits = predict_logits(text)
 probs = torch.softmax(logits, dim=0)
 print(probs)
