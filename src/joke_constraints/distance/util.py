@@ -1,6 +1,7 @@
 import ollama
+from src.config import load_config
 
-def check_model_installed(model_name: str) -> None:
+def check_model_installed(model_name: str = load_config().model.embeddingModel) -> None:
     # Retrieve the list of local models
     local_models = [m['model'] for m in ollama.list()['models']]
 

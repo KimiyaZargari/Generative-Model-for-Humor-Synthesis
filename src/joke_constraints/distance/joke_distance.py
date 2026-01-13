@@ -1,8 +1,7 @@
 import ollama
 import numpy as np
-from . import check_model_installed
+from src.config import load_config
 
-MODEL = "bge-m3:latest"
 
 def cosine_distances(embeddings: np.ndarray) -> list[float]:
     E = np.asarray(embeddings, dtype=np.float32)  # (1+N, d)
@@ -24,9 +23,9 @@ def cosine_distances(embeddings: np.ndarray) -> list[float]:
 
 
 def distances(headline: str, jokes: list[str]) -> list[float]:
-    check_model_installed(MODEL)
+    cfg = load_config()
     resp = ollama.embed(
-        model=MODEL,
+        model= cfg.model.embeddingModel,
         input=[headline, *jokes]
     )
     embeddings = resp['embeddings']
