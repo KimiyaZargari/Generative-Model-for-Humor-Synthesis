@@ -19,12 +19,37 @@ login(token="llama-nlp")
 # ========================
 # CONFIGURATION - Multilingual (EN + ES + ZH)
 # ========================
-
-# Base model - Meta-Llama-3-8B (supports multilingual)
+# Base model - Qwen2.5-3B (Small, fast, great for Chinese)
 MODEL_CONFIG = {
-    "model_name": "meta-llama/Meta-Llama-3-8B",
-    "output_dir": "models/llama-3-jokes-multilingual",
+    "model_name": "Qwen/Qwen2.5-3B",
+    "output_dir": "models/qwen2.5-3b-jokes-multilingual",
 }
+
+# LoRA config (same as before)
+lora_config = LoRATrainingConfig(
+    r=16,
+    lora_alpha=32,
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+    lora_dropout=0.05,
+    bias="none",
+)
+
+# Training config - can increase batch size with smaller model
+training_config = TrainingConfig(
+    output_dir=MODEL_CONFIG["output_dir"],
+    num_train_epochs=3,
+    per_device_train_batch_size=8,  # ← Increased from 4
+    gradient_accumulation_steps=1,  # ← Reduced from 2
+    learning_rate=2e-5,
+    warmup_steps=100,
+    logging_steps=50,
+    save_strategy="epoch",
+    save_total_limit=2,
+    max_grad_norm=1.0,
+    fp16=False,  # Can enable on GPU for even more speed
+    eval_strategy="no",
+    weight_decay=0.01,
+)
 
 # Dataset configurations
 DATASET_CONFIGS = {
@@ -59,32 +84,6 @@ SYSTEM_PROMPTS = {
     "chinese": "你是一位富有创意且幽默风趣的喜剧作家，热爱创作笑话",
 }
 
-# LoRA configuration for Llama-3
-lora_config = LoRATrainingConfig(
-    r=16,
-    lora_alpha=32,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-    lora_dropout=0.05,
-    bias="none",
-)
-
-# Training configuration
-training_config = TrainingConfig(
-    output_dir=MODEL_CONFIG["output_dir"],
-    num_train_epochs=3,
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=2,
-    learning_rate=2e-5,
-    warmup_steps=100,
-    logging_steps=50,
-    save_strategy="epoch",
-    save_total_limit=2,
-    max_grad_norm=1.0,
-    fp16=False,
-    eval_strategy="no",
-    weight_decay=0.01,
-)
-
 
 # ========================
 # DATA LOADING FUNCTIONS
@@ -94,22 +93,22 @@ training_config = TrainingConfig(
 def load_local_jokes(path, text_field="body", exclude_ids=None):
     """Load jokes from local JSON file"""
     import json
-    
+
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     if exclude_ids:
         jokes = [d[text_field] for d in data if d.get("id") not in exclude_ids]
     else:
         jokes = [d[text_field] for d in data if text_field in d]
-    
+
     return jokes
 
 
 def load_huggingface_jokes(dataset_path, text_field="text"):
     """Load jokes from HuggingFace dataset"""
     dataset = load_dataset(dataset_path, split="train")
-    
+
     # Extract jokes
     if text_field in dataset.column_names:
         jokes = [item[text_field] for item in dataset]
@@ -119,18 +118,18 @@ def load_huggingface_jokes(dataset_path, text_field="text"):
         # Use the first text-like field
         text_field = dataset.column_names[0]
         jokes = [item[text_field] for item in dataset]
-    
+
     return jokes
 
 
 def clean_and_split_joke(text, nlp):
     """Clean joke text and split into sentences"""
     import unicodedata
-    
+
     # Skip jokes mentioning "Conan" for English dataset
     if "Conan" in text:
         return None
-    
+
     # Clean text
     cleaned = (
         unicodedata.normalize("NFKD", text)
@@ -138,19 +137,15 @@ def clean_and_split_joke(text, nlp):
         .replace("—", "--")
         .strip()
     )
-    
+
     if not cleaned:
         return None
-    
+
     # Split into sentences
     doc = nlp(cleaned)
     sentences = [sent.text for sent in doc.sents]
-    
-    return {
-        "text": cleaned,
-        "sentences": sentences,
-        "sentence_ct": len(sentences)
-    }
+
+    return {"text": cleaned, "sentences": sentences, "sentence_ct": len(sentences)}
 
 
 def prepare_chat_dataset_multilingual(
@@ -165,7 +160,7 @@ def prepare_chat_dataset_multilingual(
 ):
     """
     Prepare jokes in chat format
-    
+
     Args:
         jokes: List of joke texts
         tokenizer: Tokenizer
@@ -178,7 +173,7 @@ def prepare_chat_dataset_multilingual(
     """
     import spacy
     import hashlib
-    
+
     # Load appropriate spaCy model
     if language == "chinese":
         try:
@@ -186,6 +181,7 @@ def prepare_chat_dataset_multilingual(
         except:
             print(f"  Installing Chinese spaCy model...")
             import subprocess
+
             subprocess.run(["python", "-m", "spacy", "download", "zh_core_web_sm"])
             nlp = spacy.load("zh_core_web_sm")
     elif language == "spanish":
@@ -194,6 +190,7 @@ def prepare_chat_dataset_multilingual(
         except:
             print(f"  Installing Spanish spaCy model...")
             import subprocess
+
             subprocess.run(["python", "-m", "spacy", "download", "es_core_news_sm"])
             nlp = spacy.load("es_core_news_sm")
     else:  # English
@@ -202,47 +199,48 @@ def prepare_chat_dataset_multilingual(
         except:
             print(f"  Installing English spaCy model...")
             import subprocess
+
             subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
             nlp = spacy.load("en_core_web_sm")
-    
+
     # Shuffle jokes
     random.shuffle(jokes)
-    
+
     # Clean and process
     jokes_cleaned = []
-    for joke in jokes[:max_entries * 2]:  # Process more than needed
+    for joke in jokes[: max_entries * 2]:  # Process more than needed
         cleaned = clean_and_split_joke(joke, nlp)
         if cleaned:
             jokes_cleaned.append(cleaned)
-    
+
     print(f"    Cleaned {len(jokes_cleaned)} jokes")
-    
+
     # Format for training
     processed_examples = []
     seen = set()
-    
+
     for joke in jokes_cleaned:
         if len(processed_examples) >= max_entries:
             break
-        
+
         # Filter by sentence count
         ct = joke["sentence_ct"]
         if ct < min_sentences or ct > max_sentences:
             continue
-        
+
         # Split into setup and punchline
         setup = joke["sentences"][0]
         punchline = " ".join(joke["sentences"][1:])
-        
+
         # Deduplication
         hash_id = hashlib.shake_128(punchline.encode()).hexdigest(4)
         if hash_id in seen:
             continue
         seen.add(hash_id)
-        
+
         # Format in chat style
         formatted_text = f"<|system|>{system_prompt}<|user|>{setup}<|assistant|>{punchline}<|endoftext|>"
-        
+
         # Tokenize
         tokenized = tokenizer(
             formatted_text,
@@ -251,17 +249,19 @@ def prepare_chat_dataset_multilingual(
             padding="max_length",
             return_tensors=None,
         )
-        
+
         tokenized["labels"] = tokenized["input_ids"].copy()
         processed_examples.append(tokenized)
-    
+
     print(f"    ✓ Created {len(processed_examples)} training examples")
-    
+
     # Convert to Dataset
-    return Dataset.from_dict({
-        key: [example[key] for example in processed_examples]
-        for key in processed_examples[0].keys()
-    })
+    return Dataset.from_dict(
+        {
+            key: [example[key] for example in processed_examples]
+            for key in processed_examples[0].keys()
+        }
+    )
 
 
 # ========================
@@ -293,28 +293,23 @@ def main():
     # 2. Load and prepare datasets for each language
     print("\n[2/5] Loading and preparing multilingual datasets...")
     all_datasets = []
-    
+
     for lang_name, config in DATASET_CONFIGS.items():
         print(f"\n  [{lang_name.upper()}]")
-        
+
         try:
             # Load jokes based on type
             if config["type"] == "local":
                 print(f"    Loading from local file: {config['path']}")
                 jokes = load_local_jokes(
-                    config["path"],
-                    config["text_field"],
-                    config.get("exclude_ids")
+                    config["path"], config["text_field"], config.get("exclude_ids")
                 )
             else:  # huggingface
                 print(f"    Loading from HuggingFace: {config['path']}")
-                jokes = load_huggingface_jokes(
-                    config["path"],
-                    config["text_field"]
-                )
-            
+                jokes = load_huggingface_jokes(config["path"], config["text_field"])
+
             print(f"    Loaded {len(jokes)} raw jokes")
-            
+
             # Prepare dataset
             system_prompt = SYSTEM_PROMPTS[lang_name]
             lang_dataset = prepare_chat_dataset_multilingual(
@@ -327,32 +322,33 @@ def main():
                 max_sentences=MAX_SENTENCES,
                 language=lang_name,
             )
-            
+
             all_datasets.append(lang_dataset)
             print(f"    ✓ Added {len(lang_dataset)} examples")
-            
+
         except Exception as e:
             print(f"    ✗ Error loading {lang_name}: {e}")
             import traceback
+
             traceback.print_exc()
             continue
-    
+
     if not all_datasets:
         print("\n✗ No datasets loaded!")
         return
-    
+
     # Combine all datasets
     print("\n  Combining all language datasets...")
     combined_dataset = concatenate_datasets(all_datasets)
-    
+
     # Shuffle combined dataset
     combined_dataset = combined_dataset.shuffle(seed=42)
-    
+
     print(f"\n  ✓ Total training examples: {len(combined_dataset)}")
     print(f"  Distribution:")
     for i, (lang, dataset) in enumerate(zip(DATASET_CONFIGS.keys(), all_datasets)):
         print(f"    {lang}: {len(dataset)} examples")
-    
+
     print_dataset_info(combined_dataset, "Multilingual Jokes Dataset")
 
     # 3. Setup model with LoRA
@@ -387,11 +383,11 @@ def main():
     print("✓ MULTILINGUAL TRAINING COMPLETE!")
     print(f"✓ Model saved to: {MODEL_CONFIG['output_dir']}")
     print("=" * 70)
-    
+
     print("\nSupported languages:")
     for lang in DATASET_CONFIGS.keys():
         print(f"  • {lang}")
-    
+
     print("\nSystem prompts used:")
     for lang, prompt in SYSTEM_PROMPTS.items():
         print(f"  [{lang}] {prompt}")
