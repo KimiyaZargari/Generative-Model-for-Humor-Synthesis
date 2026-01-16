@@ -10,29 +10,38 @@ from src.utils.training_utils import (
 from src.utils.tokenizer_utils import load_tokenizer
 from src.utils.data_loader import (
     load_json_dataset,
-    prepare_dataset_completion_style,
     print_dataset_info,
 )
+from src.utils import load_tokenizer
+import src.utils.data_loader as data_loader
 
 # ========================
-# CONFIGURATION
+# CONFIGURATION (Matching train-2.ipynb)
 # ========================
 
-# Single base model (GPT-2 as Curie alternative)
+# Single base model - GPT-2 as closest open-source alternative to GPT-3.5-turbo
+# (GPT-3.5-turbo is not open-source, so we use GPT-2 XL for similar architecture)
 MODEL_CONFIG = {
-    "model_name": "gpt2",  # or "gpt2-medium" for closer to Curie size
-    "output_dir": "models/gpt2-conan-jokes",
+    "model_name": "gpt2",  # or "gpt2-xl" for closer to GPT-3.5 size
+    "output_dir": "models/gpt2-conan-chat",
 }
 
-# Single dataset (Conan jokes)
-DATASET_PATH = "data/training-data/jokes-all.json"
+# Dataset path - Conan jokes only (matching train-2 line 241)
+DATASET_PATH = "data/raw/jokes-coco.json"
 
-# Match ipynb settings
-MAX_LENGTH = 256  # Accommodate prompt + completion
-DATA_LIMIT = 9000  # Match MAX_ENTRIES from ipynb
-MIN_SENTENCES = 2  # Only use jokes with 2+ sentences
+# Settings matching train-2.ipynb exactly
+MAX_LENGTH = 512  # Increased for chat format
+MAX_ENTRIES = 5000  # Line 324
+MIN_SENTENCES = 2  # Line 335
+MAX_SENTENCES = 4  # Line 335
+EXCLUDE_IDS = {88572, 99457, 99483}  # Line 225
 
-# LoRA configuration (lighter for GPT-2)
+# System prompt (matching train-2 line 325)
+SYSTEM_PROMPT = (
+    "You are a creative and hilarious comedy writer that loves to craft jokes"
+)
+
+# LoRA configuration for GPT-2
 lora_config = LoRATrainingConfig(
     r=8,
     lora_alpha=16,
@@ -41,13 +50,17 @@ lora_config = LoRATrainingConfig(
     bias="none",
 )
 
-# Training configuration matching ipynb
+# Training configuration
+# GPT-3.5-turbo fine-tuning typically uses:
+# - 3-4 epochs
+# - Small learning rate (1e-5 to 5e-5)
+# - Small batch size
 training_config = TrainingConfig(
     output_dir=MODEL_CONFIG["output_dir"],
-    num_train_epochs=2,  # Match n_epochs from ipynb
+    num_train_epochs=3,  # Standard for GPT-3.5-turbo fine-tuning
     per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,
-    learning_rate=1e-4,  # Match learning_rate_multiplier * base_lr
+    gradient_accumulation_steps=2,
+    learning_rate=2e-5,  # GPT-3.5-turbo default fine-tuning LR
     warmup_steps=100,
     logging_steps=50,
     save_strategy="epoch",
@@ -55,63 +68,63 @@ training_config = TrainingConfig(
     max_grad_norm=1.0,
     fp16=False,
     eval_strategy="no",
+    weight_decay=0.01,
 )
 
 
 def main():
-    """Main training function - matches ipynb approach"""
+    """Main training function - matches train-2.ipynb approach"""
 
     print("\n" + "=" * 60)
-    print("CONAN JOKES FINE-TUNING (matching ipynb)")
+    print("CONAN JOKES CHAT-STYLE FINE-TUNING")
+    print("(Matching train-2.ipynb)")
     print("=" * 60)
     print(f"\nModel: {MODEL_CONFIG['model_name']}")
-    print(f"Dataset: {DATASET_PATH}")
-    print(f"Max entries: {DATA_LIMIT}")
-    print(f"Min sentences per joke: {MIN_SENTENCES}")
+    print(f"Dataset: {DATASET_PATH} (Conan jokes only)")
+    print(f"System prompt: {SYSTEM_PROMPT}")
+    print(f"Max entries: {MAX_ENTRIES}")
+    print(f"Sentence range: {MIN_SENTENCES}-{MAX_SENTENCES}")
+    print(f"Exclude IDs: {EXCLUDE_IDS}")
     print("=" * 60)
 
     # 1. Load tokenizer
     print("\n[1/5] Loading tokenizer...")
     tokenizer = load_tokenizer(MODEL_CONFIG["model_name"])
 
-    # Add special tokens for prompt/completion format
-    special_tokens = {"pad_token": "[PAD]", "sep_token": "###", "eos_token": " END"}
-    tokenizer.add_special_tokens(special_tokens)
+    # Add chat-specific special tokens if needed
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    # 2. Load dataset with completion-style formatting
-    print("\n[2/5] Loading dataset (completion-style)...")
-    dataset = load_json_dataset(DATASET_PATH, limit=DATA_LIMIT)
-
-    # Filter for jokes with 2+ sentences (matching ipynb logic)
-    print(f"  Filtering for {MIN_SENTENCES}+ sentence jokes...")
-    tokenized_dataset = prepare_dataset_completion_style(
-        dataset=dataset,
+    # 2. Load and prepare chat-formatted dataset
+    print("\n[2/5] Loading and preparing Conan jokes (chat format)...")
+    chat_dataset = data_loader.load_and_prepare_chat_dataset(
+        dataset_path=DATASET_PATH,
         tokenizer=tokenizer,
+        system_prompt=SYSTEM_PROMPT,
         max_length=MAX_LENGTH,
+        max_entries=MAX_ENTRIES,
         min_sentences=MIN_SENTENCES,
+        max_sentences=MAX_SENTENCES,
+        exclude_ids=EXCLUDE_IDS,
     )
 
-    print(f"  ✓ Prepared {len(tokenized_dataset)} training examples")
+    print(f"  ✓ Prepared {len(chat_dataset)} training examples")
+    print_dataset_info(chat_dataset, "Conan Jokes Dataset")
 
     # 3. Setup model with LoRA
     print("\n[3/5] Setting up model with LoRA...")
     device = get_optimal_device()
-    model = setup_model_with_lora(
-        MODEL_CONFIG["model_name"],
-        lora_config,
-        device,
-        resize_embeddings=len(tokenizer),  # Resize for new special tokens
-    )
+    model = setup_model_with_lora(MODEL_CONFIG["model_name"], lora_config, device)
 
     # 4. Create trainer
     print("\n[4/5] Creating trainer...")
     print_training_info(
-        MODEL_CONFIG["model_name"], len(tokenized_dataset), MAX_LENGTH, training_config
+        MODEL_CONFIG["model_name"], len(chat_dataset), MAX_LENGTH, training_config
     )
     trainer = create_trainer(
         model=model,
         tokenizer=tokenizer,
-        train_dataset=tokenized_dataset,
+        train_dataset=chat_dataset,
         training_config=training_config,
     )
 
@@ -127,6 +140,11 @@ def main():
     print("✓ TRAINING COMPLETE!")
     print(f"✓ Model saved to: {MODEL_CONFIG['output_dir']}")
     print("=" * 60)
+
+    print("\nTo test the model, use:")
+    print(f"  Model: {MODEL_CONFIG['output_dir']}")
+    print(f"  Format: Chat with system prompt")
+    print(f"  System: {SYSTEM_PROMPT}")
 
 
 if __name__ == "__main__":
