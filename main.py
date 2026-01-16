@@ -1,40 +1,58 @@
 """
 Main inference script for testing fine-tuned joke generation models
+Supports both GPT-2 and Llama-3 models with chat format
 """
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import torch
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 # ========================
 # CONFIGURATION
 # ========================
-BASE_MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
-# Model paths - uncomment the ones you want to load
-MODEL_PATHS = {
-    # "reddit": "./models/sample-reddit-model",
-    # "general": "./models/general-custom-model",
-    # "conan": "./models/conan-model",
-    "semi_merged": "./models/merged-reddit-general-jokes-model",
+# Model configurations - add your trained models here
+MODEL_CONFIGS = {
+    "gpt2-conan": {
+        "base_model": "gpt2",
+        "lora_path": "./models/gpt2-conan-chat",
+        "format": "chat",
+    },
+    "llama3-conan": {
+        "base_model": "meta-llama/Meta-Llama-3-8B",
+        "lora_path": "./models/llama-3-8b-conan-chat",
+        "format": "chat",
+    },
+    # Add more models as needed
+    # "tinyllama-reddit": {
+    #     "base_model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    #     "lora_path": "./models/sample-reddit-model",
+    #     "format": "instruction",
+    # },
 }
+
+# System prompt (matching train-2)
+SYSTEM_PROMPT = (
+    "You are a creative and hilarious comedy writer that loves to craft jokes"
+)
 
 # Generation parameters
 GENERATION_CONFIG = {
+    "chat": {
+        "max_new_tokens": 100,
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "top_k": 50,
+        "do_sample": True,
+        "repetition_penalty": 1.1,
+    },
     "instruction": {
         "max_new_tokens": 80,
         "temperature": 0.8,
         "top_p": 0.9,
         "top_k": 40,
-        "do_sample": True,
-    },
-    "conan": {
-        "max_new_tokens": 80,
-        "temperature": 0.9,
-        "top_p": 0.95,
-        "top_k": 50,
         "do_sample": True,
     },
 }
@@ -46,18 +64,24 @@ GENERATION_CONFIG = {
 def get_device() -> torch.device:
     """Get the optimal device for inference"""
     if torch.cuda.is_available():
-        return torch.device("cuda")
+        device = torch.device("cuda")
+        print(f"  Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     elif torch.backends.mps.is_available():
-        return torch.device("mps")
+        device = torch.device("mps")
+        print("  Using Apple Silicon GPU (MPS)")
     else:
-        return torch.device("cpu")
+        device = torch.device("cpu")
+        print("  Using CPU")
+    return device
 
 
 def load_tokenizer(model_name: str) -> AutoTokenizer:
     """Load and configure tokenizer"""
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    print(f"  Loading tokenizer: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+        print(f"    Set pad_token to eos_token")
     return tokenizer
 
 
@@ -75,50 +99,131 @@ def load_lora_model(
     Returns:
         Loaded and configured PeftModel
     """
-    print(f"Loading LoRA model from {lora_path}...")
-    base_model = AutoModelForCausalLM.from_pretrained(base_model_name).to(device)
+    print(f"  Loading base model: {base_model_name}")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
+        trust_remote_code=True,
+        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
+    ).to(device)
+
+    print(f"  Loading LoRA adapter from: {lora_path}")
     model = PeftModel.from_pretrained(base_model, lora_path).to(device)
     model.eval()
     return model
 
 
 def load_all_models(
-    base_model_name: str, model_paths: Dict[str, str], device: torch.device
-) -> Dict[str, PeftModel]:
+    model_configs: Dict[str, Dict[str, str]], device: torch.device
+) -> Dict[str, tuple]:
     """
     Load all specified models
 
     Args:
-        base_model_name: Name of the base model
-        model_paths: Dictionary mapping model names to paths
+        model_configs: Dictionary of model configurations
         device: Device to load models on
 
     Returns:
-        Dictionary of loaded models
+        Dictionary mapping model names to (model, tokenizer, format) tuples
     """
     models = {}
-    for name, path in model_paths.items():
+    for name, config in model_configs.items():
         try:
-            models[name] = load_lora_model(base_model_name, path, device)
-            print(f"✓ Loaded {name} model")
+            print(f"\n[Loading {name}]")
+            tokenizer = load_tokenizer(config["base_model"])
+            model = load_lora_model(config["base_model"], config["lora_path"], device)
+            models[name] = (model, tokenizer, config["format"])
+            print(f"  ✓ Successfully loaded {name}")
         except Exception as e:
-            print(f"✗ Failed to load {name} model: {e}")
+            print(f"  ✗ Failed to load {name}: {e}")
     return models
 
 
 # ========================
 # GENERATION FUNCTIONS
 # ========================
+def format_chat_prompt(setup: str, system_prompt: str = SYSTEM_PROMPT) -> str:
+    """
+    Format a prompt in chat style (matching train-2 format)
+
+    Args:
+        setup: The joke setup
+        system_prompt: System prompt
+
+    Returns:
+        Formatted prompt string
+    """
+    return f"<|system|>{system_prompt}<|user|>{setup}<|assistant|>"
+
+
+def format_instruction_prompt(prompt: str) -> str:
+    """
+    Format a prompt in instruction style
+
+    Args:
+        prompt: The instruction/prompt
+
+    Returns:
+        Formatted prompt string
+    """
+    return f"### Instruction:\n{prompt}\n\n### Response:\n"
+
+
+def generate_chat_format(
+    model: PeftModel,
+    tokenizer: AutoTokenizer,
+    setup: str,
+    device: torch.device,
+    system_prompt: str = SYSTEM_PROMPT,
+    **generation_kwargs,
+) -> str:
+    """
+    Generate punchline using chat format (matching train-2)
+
+    Args:
+        model: The model to use for generation
+        tokenizer: Tokenizer
+        setup: The joke setup (first sentence)
+        device: Device for inference
+        system_prompt: System prompt for the model
+        **generation_kwargs: Additional generation parameters
+
+    Returns:
+        Generated punchline
+    """
+    # Format prompt
+    prompt = format_chat_prompt(setup, system_prompt)
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+            **generation_kwargs,
+        )
+
+    # Decode full output
+    full_text = tokenizer.decode(output_ids[0], skip_special_tokens=False)
+
+    # Extract punchline (everything after <|assistant|>)
+    if "<|assistant|>" in full_text:
+        punchline = full_text.split("<|assistant|>")[-1].strip()
+        # Remove end tokens
+        punchline = punchline.replace("<|endoftext|>", "").strip()
+    else:
+        punchline = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        # Try to extract just the generated part
+        punchline = punchline.replace(prompt, "").strip()
+
+    return punchline
+
+
 def generate_instruction_format(
     model: PeftModel,
     tokenizer: AutoTokenizer,
     prompt: str,
     device: torch.device,
-    max_new_tokens: int = 80,
-    temperature: float = 0.8,
-    top_p: float = 0.9,
-    top_k: int = 40,
-    do_sample: bool = True,
+    **generation_kwargs,
 ) -> str:
     """
     Generate text using instruction-following format
@@ -128,29 +233,21 @@ def generate_instruction_format(
         tokenizer: Tokenizer
         prompt: The instruction/prompt
         device: Device for inference
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        top_k: Top-k sampling parameter
-        do_sample: Whether to use sampling
+        **generation_kwargs: Additional generation parameters
 
     Returns:
         Generated text (response only)
     """
     # Format as instruction
-    input_text = f"### Instruction:\n{prompt}\n\n### Response:\n"
+    input_text = format_instruction_prompt(prompt)
     inputs = tokenizer(input_text, return_tensors="pt").to(device)
 
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.pad_token_id,
+            **generation_kwargs,
         )
 
     # Decode and extract response
@@ -159,138 +256,101 @@ def generate_instruction_format(
     return response
 
 
-def generate_direct(
-    model: PeftModel,
-    tokenizer: AutoTokenizer,
-    prompt: str,
-    device: torch.device,
-    max_new_tokens: int = 80,
-    temperature: float = 0.9,
-    top_p: float = 0.95,
-    top_k: int = 50,
-    do_sample: bool = True,
-) -> str:
-    """
-    Generate text directly (no instruction format)
-
-    Args:
-        model: The model to use for generation
-        tokenizer: Tokenizer
-        prompt: The prompt
-        device: Device for inference
-        max_new_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        top_k: Top-k sampling parameter
-        do_sample: Whether to use sampling
-
-    Returns:
-        Generated text
-    """
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            eos_token_id=tokenizer.eos_token_id,
-            pad_token_id=tokenizer.pad_token_id,
-        )
-
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
-
-
 def generate_from_model(
-    model_name: str,
     model: PeftModel,
     tokenizer: AutoTokenizer,
     prompt: str,
     device: torch.device,
-    use_instruction_format: bool = True,
+    format_type: str = "chat",
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     """
     Generate text from a model with appropriate formatting
 
     Args:
-        model_name: Name of the model (for config lookup)
         model: The model to use
         tokenizer: Tokenizer
         prompt: The prompt
         device: Device for inference
-        use_instruction_format: Whether to use instruction format
+        format_type: Format type ("chat" or "instruction")
+        system_prompt: System prompt (for chat format)
 
     Returns:
         Generated text
     """
-    # Determine which config to use
-    config_key = "conan" if model_name == "conan" else "instruction"
-    config = GENERATION_CONFIG[config_key]
+    # Get generation config
+    config = GENERATION_CONFIG.get(format_type, GENERATION_CONFIG["chat"])
 
-    if use_instruction_format and model_name != "conan":
-        return generate_instruction_format(model, tokenizer, prompt, device, **config)
+    if format_type == "chat":
+        return generate_chat_format(
+            model, tokenizer, prompt, device, system_prompt, **config
+        )
     else:
-        return generate_direct(model, tokenizer, prompt, device, **config)
+        return generate_instruction_format(model, tokenizer, prompt, device, **config)
 
 
 # ========================
 # TESTING FUNCTIONS
 # ========================
 def test_single_prompt(
-    models: Dict[str, PeftModel],
-    tokenizer: AutoTokenizer,
+    models: Dict[str, tuple],
     prompt: str,
-    device: torch.device,
+    num_variations: int = 3,
 ) -> None:
-    """Test all models with a single prompt"""
+    """
+    Test all models with a single prompt
+
+    Args:
+        models: Dictionary of (model, tokenizer, format) tuples
+        prompt: The joke setup or prompt
+        num_variations: Number of variations to generate per model
+    """
     print("\n" + "=" * 70)
-    print(f"PROMPT: {prompt}")
+    print(f"SETUP: {prompt}")
     print("=" * 70)
 
-    for model_name, model in models.items():
+    for model_name, (model, tokenizer, format_type) in models.items():
         print(f"\n=== {model_name.upper()} ===")
         try:
-            use_instruction = model_name != "conan"
-            output = generate_from_model(
-                model_name, model, tokenizer, prompt, device, use_instruction
-            )
-            print(output)
+            device = next(model.parameters()).device
+
+            for i in range(num_variations):
+                output = generate_from_model(
+                    model, tokenizer, prompt, device, format_type
+                )
+                print(f"\n  [{i+1}] {output}")
+
         except Exception as e:
             print(f"Error: {e}")
+            import traceback
+
+            traceback.print_exc()
 
 
 def test_multiple_prompts(
-    models: Dict[str, PeftModel],
-    tokenizer: AutoTokenizer,
-    prompts: list,
-    device: torch.device,
+    models: Dict[str, tuple],
+    prompts: List[str],
+    num_variations: int = 3,
 ) -> None:
     """Test all models with multiple prompts"""
     for prompt in prompts:
-        test_single_prompt(models, tokenizer, prompt, device)
+        test_single_prompt(models, prompt, num_variations)
         print("\n")
 
 
-def interactive_mode(
-    models: Dict[str, PeftModel],
-    tokenizer: AutoTokenizer,
-    device: torch.device,
-) -> None:
+def interactive_mode(models: Dict[str, tuple]) -> None:
     """Interactive mode for testing models"""
     print("\n" + "=" * 70)
     print("INTERACTIVE MODE")
     print("=" * 70)
     print("Available models:", ", ".join(models.keys()))
-    print("Commands:")
-    print("  - Type a prompt to test all models")
+    print("\nCommands:")
+    print("  - Type a joke setup to generate punchlines")
     print("  - Type 'quit' or 'exit' to exit")
     print("=" * 70 + "\n")
 
     while True:
-        prompt = input("Enter prompt (or 'quit'): ").strip()
+        prompt = input("\nEnter joke setup (or 'quit'): ").strip()
 
         if prompt.lower() in ["quit", "exit", "q"]:
             print("Exiting...")
@@ -299,8 +359,7 @@ def interactive_mode(
         if not prompt:
             continue
 
-        test_single_prompt(models, tokenizer, prompt, device)
-        print("\n")
+        test_single_prompt(models, prompt, num_variations=3)
 
 
 # ========================
@@ -309,45 +368,48 @@ def interactive_mode(
 def main():
     """Main function"""
     print("=" * 70)
-    print("JOKE GENERATION MODEL TESTER")
+    print("CONAN JOKES MODEL TESTER (Chat Format)")
     print("=" * 70)
 
     # Setup
     print("\n[1/3] Setting up...")
     device = get_device()
-    print(f"Using device: {device}")
-
-    tokenizer = load_tokenizer(BASE_MODEL_NAME)
-    print(f"Loaded tokenizer: {BASE_MODEL_NAME}")
 
     # Load models
     print("\n[2/3] Loading models...")
-    models = load_all_models(BASE_MODEL_NAME, MODEL_PATHS, device)
+    models = load_all_models(MODEL_CONFIGS, device)
 
     if not models:
-        print("No models loaded! Check your MODEL_PATHS configuration.")
+        print("\n✗ No models loaded! Check your MODEL_CONFIGS.")
+        print("Make sure the paths in MODEL_CONFIGS point to your trained models.")
         return
 
-    print(f"\nLoaded {len(models)} model(s): {list(models.keys())}")
+    print(f"\n✓ Loaded {len(models)} model(s): {list(models.keys())}")
 
     # Test
     print("\n[3/3] Testing models...")
 
-    # Single test prompt
+    # Test prompts (joke setups)
     test_prompts = [
-        "Generate a joke containing the two words: Rabbit, Apple",
-        "Tell me a joke about programming",
-        "Why did the chicken cross the road?",
+        "A tech billionaire walked into a bar.",
+        "Scientists announced they've discovered a new planet.",
+        "The robot applied for a job as a therapist.",
+        "I tried to teach my dog about cryptocurrency.",
     ]
 
-    # Test with first prompt
-    test_multiple_prompts(models, tokenizer, test_prompts, device)
+    # Run tests
+    print("\n" + "=" * 70)
+    print("TESTING WITH SAMPLE SETUPS")
+    print("=" * 70)
 
-    # Uncomment to test multiple prompts
-    # test_multiple_prompts(models, tokenizer, test_prompts, device)
+    # Test with multiple prompts (3 variations each)
+    test_multiple_prompts(models, test_prompts, num_variations=3)
 
     # Uncomment for interactive mode
-    # interactive_mode(models, tokenizer, device)
+    print("\n" + "=" * 70)
+    print("Switching to interactive mode...")
+    print("=" * 70)
+    interactive_mode(models)
 
     print("\n" + "=" * 70)
     print("TESTING COMPLETE")
