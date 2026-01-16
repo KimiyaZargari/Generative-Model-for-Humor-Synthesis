@@ -20,9 +20,9 @@ MODEL_CONFIGS = {
         "lora_path": "./models/gpt2-conan-chat",
         "format": "chat",
     },
-    "llama3-conan": {
-        "base_model": "meta-llama/Meta-Llama-3-8B",
-        "lora_path": "./models/llama-3-8b-conan-chat",
+    "qwen2-conan": {
+        "base_model": "Qwen/Qwen2.5-3B",
+        "lora_path": "./models/qwen2.5-3b-jokes-multilingual",
         "format": "chat",
     },
     # Add more models as needed
