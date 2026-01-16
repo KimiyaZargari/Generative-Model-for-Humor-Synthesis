@@ -44,6 +44,8 @@ class TrainingConfig:
     weight_decay: float = 0.01
     optim: str = "adamw_torch"
     lr_scheduler_type: str = "linear"
+    remove_unused_columns: bool = False
+    report_to: str = "none"
 
 
 def get_optimal_device():
@@ -136,12 +138,12 @@ def create_trainer(
         save_total_limit=training_config.save_total_limit,
         max_grad_norm=training_config.max_grad_norm,
         fp16=training_config.fp16,
-        evaluation_strategy=training_config.eval_strategy,
+        eval_strategy=training_config.eval_strategy,  # Changed from evaluation_strategy
         weight_decay=training_config.weight_decay,
         optim=training_config.optim,
         lr_scheduler_type=training_config.lr_scheduler_type,
-        report_to="none",  # Disable wandb/tensorboard
-        remove_unused_columns=False,
+        report_to=training_config.report_to,
+        remove_unused_columns=training_config.remove_unused_columns,
     )
 
     trainer = Trainer(

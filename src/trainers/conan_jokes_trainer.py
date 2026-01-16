@@ -27,7 +27,7 @@ MODEL_CONFIG = {
 }
 
 # Dataset path - Conan jokes only (matching train-2 line 241)
-DATASET_PATH = "data/raw/jokes-coco.json"
+DATASET_PATH = "data/training-data/jokes-all.json"
 
 # Settings matching train-2.ipynb exactly
 MAX_LENGTH = 512  # Increased for chat format
@@ -77,7 +77,6 @@ def main():
 
     print("\n" + "=" * 60)
     print("CONAN JOKES CHAT-STYLE FINE-TUNING")
-    print("(Matching train-2.ipynb)")
     print("=" * 60)
     print(f"\nModel: {MODEL_CONFIG['model_name']}")
     print(f"Dataset: {DATASET_PATH} (Conan jokes only)")

@@ -87,7 +87,6 @@ def load_and_prepare_chat_dataset(
     # Load data (matching train-2 lines 194-196, 227-229)
     print(f"  Loading from {dataset_path}...")
     data_conan = load_json_dataset(dataset_path)
-    print(f"  Loaded {len(data_conan)} raw jokes from TeamCoco")
 
     # Extract jokes excluding duplicate IDs (matching train-2 line 227)
     jokes_conan = [d["body"] for d in data_conan if d["id"] not in exclude_ids]
