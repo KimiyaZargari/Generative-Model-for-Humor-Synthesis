@@ -11,6 +11,22 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 
+def _parse_legend_items(items: List[str]) -> dict:
+    """
+    Parse legend mappings like: ["embed_head=Headline", "embed_fine=Fine-tuned"]
+    """
+    mapping = {}
+    for item in items:
+        if "=" not in item:
+            raise argparse.ArgumentTypeError("--legend items must be in the form col=Label")
+        k, v = item.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not k or not v:
+            raise argparse.ArgumentTypeError("--legend items must be in the form col=Label (non-empty)")
+        mapping[k] = v
+    return mapping
+
+
 
 def parse_embedding(cell) -> np.ndarray:
     """
@@ -147,6 +163,13 @@ def main():
              "For t-SNE: use 2 values for 2D or 3 for 3D (indices ignored).",
     )
 
+    ap.add_argument(
+        "--legend",
+        action="append",
+        default=[],
+        help="Legend label mapping. Repeatable: --legend embed_head=Headline --legend embed_fine=Fine",
+    )
+
     # NEW: t-SNE knobs (kept conservative; add more as needed)
     ap.add_argument("--tsne-perplexity", type=float, default=30.0)
     ap.add_argument("--tsne-learning-rate", default="auto", help="Float or 'auto' (sklearn supports 'auto').")
@@ -157,6 +180,7 @@ def main():
     ap.add_argument("--tsne-verbose", type=int, default=0)
 
     args = ap.parse_args()
+    legend_map = _parse_legend_items(args.legend)
     cols = [c.strip() for c in args.cols.split(",") if c.strip()]
 
     df = pd.read_csv(args.tsv, sep="\t", dtype={"id": str})
@@ -228,7 +252,11 @@ def main():
         fig, ax = plt.subplots()
         for lab in unique_labels:
             mask = labels == lab
-            ax.scatter(Xproj[mask, 0], Xproj[mask, 1], s=10, alpha=0.75, label=lab)
+            ax.scatter(
+                Xproj[mask, 0], Xproj[mask, 1],
+                s=10, alpha=0.75,
+                label=legend_map.get(lab, lab),
+            )
         ax.set_title(title)
         ax.set_xlabel(axis_labels[0])
         ax.set_ylabel(axis_labels[1])
@@ -238,7 +266,11 @@ def main():
         ax = fig.add_subplot(111, projection="3d")
         for lab in unique_labels:
             mask = labels == lab
-            ax.scatter(Xproj[mask, 0], Xproj[mask, 1], Xproj[mask, 2], s=10, alpha=0.75, label=lab)
+            ax.scatter(
+                Xproj[mask, 0], Xproj[mask, 1], Xproj[mask, 2],
+                s=10, alpha=0.75,
+                label=legend_map.get(lab, lab),
+            )
         ax.set_title(title)
         ax.set_xlabel(axis_labels[0])
         ax.set_ylabel(axis_labels[1])
@@ -264,3 +296,18 @@ if __name__ == "__main__":
 
 # t-SNE 3D
 #python visualize_embed.py --tsv embed-headline-task-a-en.tsv --method tsne --pcs 1,2,3 --tsne-iters 1500
+
+# PCA with custom legend names
+#python visualize_embed.py --tsv embed-headline-task-a-en.tsv \
+#  --method pca --pcs 1,2,3 \
+#  --legend embed_head=Headline \
+#  --legend embed_fine=Fine-tuned \
+#  --legend embed_cmp=Comparison
+
+
+# t-SNE 2D with custom legend names
+#python visualize_embed.py --tsv embed-headline-task-a-en.tsv \
+#  --method tsne --pcs 1,2 \
+#  --legend embed_head=Head \
+#  --legend embed_fine=Fine \
+#  --legend embed_cmp=Cmp
