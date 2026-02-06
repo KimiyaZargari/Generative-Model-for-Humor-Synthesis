@@ -135,7 +135,7 @@ def _make_tsne(n_components: int, args) -> TSNE:
     return TSNE(**kwargs)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tsv", required=True, help="Path to input .tsv")
     ap.add_argument(
@@ -178,8 +178,10 @@ def main():
     ap.add_argument("--tsne-metric", default="euclidean")
     ap.add_argument("--tsne-method", choices=["barnes_hut", "exact"], default="barnes_hut")
     ap.add_argument("--tsne-verbose", type=int, default=0)
+    return ap
 
-    args = ap.parse_args()
+
+def run(args: argparse.Namespace) -> None:
     legend_map = _parse_legend_items(args.legend)
     cols = [c.strip() for c in args.cols.split(",") if c.strip()]
 
@@ -279,6 +281,12 @@ def main():
 
     plt.tight_layout()
     plt.show()
+
+
+def main():
+    ap = build_parser()
+    args = ap.parse_args()
+    run(args)
 
 
 if __name__ == "__main__":

@@ -205,13 +205,16 @@ def save_scatter(x: pd.Series, y: pd.Series, title: str, xlabel: str, ylabel: st
 
 # -------------------- Main --------------------
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tsv", required=True, help="Path to input TSV")
     ap.add_argument("--outdir", default="metrics_out", help="Output directory for CSV + plots")
     ap.add_argument("--k", type=int, default=10, help="k for kNN-based metrics")
     ap.add_argument("--skip-knn", action="store_true", help="Skip kNN metrics (faster for large datasets)")
-    args = ap.parse_args()
+    return ap
+
+
+def run(args: argparse.Namespace) -> None:
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -351,10 +354,15 @@ def main():
     print(f"Saved plots to: {outdir}")
 
 
+def main():
+    ap = build_parser()
+    args = ap.parse_args()
+    run(args)
+
+
 if __name__ == "__main__":
     main()
 
 
 # python joke_embedding_metrics.py --tsv embed-headline-task-a-en.tsv --outdir metrics_out --verify-dists
 # python joke_embedding_metrics.py --tsv embed-headline-task-a-en.tsv --outdir metrics_out --skip-knn
-
