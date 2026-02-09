@@ -16,6 +16,33 @@ from unsloth import FastLanguageModel
 from trl import SFTTrainer
 from transformers import TrainingArguments
 
+from detoxify import Detoxify
+
+# filter toxic content
+_DETOXIFY_MODEL = None
+
+def is_toxic_or_abusive(text: str, threshold: float = 0.8) -> bool:
+
+    global _DETOXIFY_MODEL
+
+    if not text or not text.strip():
+        return False
+
+    if _DETOXIFY_MODEL is None:
+        _DETOXIFY_MODEL = Detoxify("original")
+
+    scores = _DETOXIFY_MODEL.predict(text)
+
+    return (
+        scores["toxicity"] >= threshold
+        or scores["severe_toxicity"] >= threshold
+        or scores["obscene"] >= threshold
+        or scores["threat"] >= threshold
+        or scores["insult"] >= threshold
+        or scores["identity_attack"] >= threshold
+        or scores["sexual_explicit"] >= threshold
+    )
+
 # helpers
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
@@ -333,6 +360,18 @@ def main():
     if args.source == "json":
         bodies = load_bodies_from_json(args.data_path)
         print("Loaded JSON bodies:", len(bodies))
+
+        toxic_skipped = 0
+        kept = []
+        for b in bodies:
+            # check toxicity on the original EN text
+            if is_toxic_or_abusive(b):
+                toxic_skipped += 1
+                continue
+            kept.append(b)
+        bodies = kept
+        if toxic_skipped:
+            print(f"[TOX] Filtered toxic EN bodies: {toxic_skipped}")
 
         if args.translate_from_en:
             limit = min(len(bodies), args.translation_limit)

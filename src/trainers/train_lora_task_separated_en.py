@@ -17,6 +17,36 @@ from unsloth import FastLanguageModel
 from trl import SFTTrainer
 from transformers import TrainingArguments
 
+from detoxify import Detoxify
+
+
+# remove toxic content
+_DETOXIFY_MODEL = None
+
+def is_toxic_or_abusive(text: str, threshold: float = 0.8) -> bool:
+    """
+    Returns True if text is toxic/abusive according to Detoxify.
+    """
+    global _DETOXIFY_MODEL
+
+    if not text or not text.strip():
+        return False
+
+    if _DETOXIFY_MODEL is None:
+        _DETOXIFY_MODEL = Detoxify("original")
+
+    scores = _DETOXIFY_MODEL.predict(text)
+
+    return (
+        scores["toxicity"] >= threshold
+        or scores["severe_toxicity"] >= threshold
+        or scores["obscene"] >= threshold
+        or scores["threat"] >= threshold
+        or scores["insult"] >= threshold
+        or scores["identity_attack"] >= threshold
+        or scores["sexual_explicit"] >= threshold
+    )
+
 
 # helpers
 def ensure_dir(path: str):
@@ -258,12 +288,19 @@ def main():
         data = json.load(f)
 
     bodies = []
+    skipped_toxic = 0
     for item in data:
         b = item.get("body", "")
         if isinstance(b, str):
             b = b.strip()
             if b:
+                if is_toxic_or_abusive(b):
+                    skipped_toxic += 1
+                    continue
                 bodies.append(b)
+
+    if skipped_toxic:
+        print(f"Filtered toxic/abusive bodies: {skipped_toxic}")
 
     random.shuffle(bodies)
     if args.max_samples is not None:
